@@ -1,30 +1,30 @@
 const express = require('express');
 const router = express.Router();
-const {
-  createRecord,
-  getPatientRecords,
-  getRecordById,
-} = require('../controllers/recordController');
-
 const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { createRecord, getPatientRecords, deleteRecord } = require('../controllers/recordController');
 
-// Configure multer memory storage for PDF parsing / file upload
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const uploadDirectory = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadDirectory)) {
+  fs.mkdirSync(uploadDirectory, { recursive: true });
+}
 
-const uploadMiddleware = (req, res, next) => {
-  upload.any()(req, res, (err) => {
-    if (err) {
-      return res.status(400).json({ message: `File upload error: ${err.message}` });
-    }
-    next();
-  });
-};
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadDirectory);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
 
-router.post('/upload', uploadMiddleware, createRecord);
-router.post('/', uploadMiddleware, createRecord);
+const upload = multer({ storage: storage });
+
+router.post('/upload', upload.single('file'), createRecord);
+router.post('/', upload.single('file'), createRecord);
 router.get('/patient/:patientId', getPatientRecords);
-router.get('/:id', getRecordById);
+router.delete('/:id', deleteRecord); // <-- New Delete Endpoint
 
 module.exports = router;
-

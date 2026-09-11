@@ -1,85 +1,75 @@
-const pdfParse = require('pdf-parse');
 const Record = require('../models/Record');
+const fs = require('fs');
+const path = require('path');
 
-// @desc    Create/Upload a new medical record (supports PDF parsing)
-// @route   POST /api/records
-// @access  Private
+// @desc    Upload new medical record
+// @route   POST /api/records/upload
 const createRecord = async (req, res) => {
   try {
-    const { patient, institution, title, description, recordType } = req.body;
-    let extractedText = '';
-    let fileUrl = '';
-
+    const { patient, institution, title, recordType, description } = req.body;
     const uploadedFile = req.file || (req.files && req.files[0]);
 
-    if (uploadedFile) {
-      fileUrl = uploadedFile.path || uploadedFile.filename || uploadedFile.originalname || '';
-
-      // Extract text if file is a PDF
-      if (uploadedFile.mimetype === 'application/pdf' && uploadedFile.buffer) {
-        try {
-          const pdfData = await pdfParse(uploadedFile.buffer);
-          extractedText = pdfData.text;
-        } catch (pdfErr) {
-          console.warn('PDF parsing warning:', pdfErr.message);
-        }
-      }
+    if (!patient || !title) {
+      return res.status(400).json({ message: 'Patient reference and record title are required.' });
     }
 
-    if (!patient || !institution || !title || !recordType) {
-      return res.status(400).json({ message: 'Please provide patient, institution, title, and recordType' });
+    let fileUrl = '';
+    if (uploadedFile) {
+      fileUrl = `uploads/${uploadedFile.filename}`;
     }
 
     const record = await Record.create({
       patient,
-      institution,
+      institution: institution || null,
       title,
-      description: description || extractedText,
-      recordType,
-      fileUrl,
+      recordType: recordType || 'LAB_REPORT',
+      description: description || '',
+      fileUrl
     });
 
     res.status(201).json(record);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'Upload error', error: error.message });
   }
 };
 
-// @desc    Get medical records for a patient
+// @desc    Get all records for a patient
 // @route   GET /api/records/patient/:patientId
-// @access  Private
 const getPatientRecords = async (req, res) => {
   try {
-    const records = await Record.find({ patient: req.params.patientId })
-      .populate('patient', 'name email')
-      .populate('institution', 'name type');
+    const records = await Record.find({ patient: req.params.patientId }).sort({ createdAt: -1 });
     res.status(200).json(records);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'Failed to fetch records', error: error.message });
   }
 };
 
-// @desc    Get record by ID
-// @route   GET /api/records/:id
-// @access  Private
-const getRecordById = async (req, res) => {
+// @desc    Delete medical record & remove file binary
+// @route   DELETE /api/records/:id
+const deleteRecord = async (req, res) => {
   try {
-    const record = await Record.findById(req.params.id)
-      .populate('patient', 'name email')
-      .populate('institution', 'name type');
-
+    const record = await Record.findById(req.params.id);
     if (!record) {
       return res.status(404).json({ message: 'Record not found' });
     }
 
-    res.status(200).json(record);
+    // Unlink local file if exists
+    if (record.fileUrl) {
+      const absoluteFilePath = path.join(__dirname, '..', record.fileUrl);
+      if (fs.existsSync(absoluteFilePath)) {
+        fs.unlinkSync(absoluteFilePath);
+      }
+    }
+
+    await Record.findByIdAndDelete(req.params.id);
+    res.status(200).json({ message: 'Record purged successfully', id: req.params.id });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: 'Deletion failed', error: error.message });
   }
 };
 
 module.exports = {
   createRecord,
   getPatientRecords,
-  getRecordById,
+  deleteRecord
 };
