@@ -36,6 +36,7 @@ app.use('/api/patients', require('./routes/patientRoutes'));
 app.use('/api/institutions', require('./routes/institutionRoutes'));
 app.use('/api/records', require('./routes/recordRoutes'));
 app.use('/api/consent', require('./routes/consentRoutes'));
+app.use('/api/summary', require('./routes/summaryRoutes')); // <-- Mounted before listen
 
 const PORT = process.env.PORT || 5000;
 
