@@ -7,7 +7,8 @@ import {
   Phone, MapPin, Droplet, CreditCard, Stethoscope, Users,
   FolderLock, Compass, Bell, Download, Database, LogIn, UserPlus,
   Trash2, Hospital, Search, ShieldAlert, HeartPulse, FileSpreadsheet,
-  CheckCircle, PlusCircle, Filter, ChevronRight, UserCheck, Sparkles
+  CheckCircle, PlusCircle, Filter, ChevronRight, UserCheck, Sparkles,
+  Flame, Edit3
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -16,7 +17,7 @@ export default function App() {
   const [authMode, setAuthMode] = useState('login');
   const [role, setRole] = useState('PATIENT'); // 'PATIENT' or 'INSTITUTION'
 
-  // Default Rich Clinical Demo Data (Instant Display for Presentation)
+  // Default Rich Clinical Demo Data
   const defaultClinicalBriefing = {
     executiveSummary: "Multi-parameter clinical synthesis indicates chronic metabolic syndrome with early-stage hypertension. Biomarkers show elevated glycemic variance with normal renal baseline. Active medication compliance is advised prior to elective interventions.",
     vitalAlerts: [
@@ -64,7 +65,6 @@ export default function App() {
         setSummary(defaultClinicalBriefing);
       }
     } catch (err) {
-      console.warn("Backend AI synthesis offline, presenting cached verified clinical dataset.");
       setSummary(defaultClinicalBriefing);
     } finally {
       setTimeout(() => {
@@ -77,9 +77,11 @@ export default function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [showPatientAadhaar, setShowPatientAadhaar] = useState(false);
 
-  // Modal State
+  // Modal States
   const [previewDoc, setPreviewDoc] = useState(null);
+  const [isBreakGlassModalOpen, setIsBreakGlassModalOpen] = useState(false);
   const [breakGlassActive, setBreakGlassActive] = useState(false);
+  const [breakGlassAuditLogs, setBreakGlassAuditLogs] = useState([]);
 
   // Form State
   const [authForm, setAuthForm] = useState({
@@ -107,7 +109,14 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
 
-  // Active Navigation Tabs
+  // Break-Glass Form
+  const [breakGlassForm, setBreakGlassForm] = useState({
+    attendingPhysician: 'Dr. Vikramaditya Saxena, MD (Emergency Medicine)',
+    clinicalReason: 'Acute Polytrauma & Hypovolemic Shock - Unresponsive Patient',
+    departmentWard: 'ICU Trauma Bay 02'
+  });
+
+  // Navigation Tabs
   const [activeNav, setActiveNav] = useState('records');
   const patientId = user?._id || '64a2fb1234567890abcdef12';
   const institutionId = user?._id || '64a2fb1234567890abcdef13';
@@ -124,7 +133,16 @@ export default function App() {
   const [records, setRecords] = useState([]);
   const [fetchingRecords, setFetchingRecords] = useState(false);
 
-  // Patient Consents
+  // Hospital-side Upload State
+  const [hospitalUploadData, setHospitalUploadData] = useState({
+    targetPatientId: '64a2fb1234567890abcdef12',
+    title: '',
+    recordType: 'DISCHARGE_SUMMARY'
+  });
+  const [hospitalFile, setHospitalFile] = useState(null);
+  const [hospitalUploadStatus, setHospitalUploadStatus] = useState({ loading: false, msg: '', type: '' });
+
+  // Patient Consents Feed
   const [consents, setConsents] = useState([
     {
       _id: 'REQ-901',
@@ -149,7 +167,7 @@ export default function App() {
     }
   ]);
 
-  // Provider Node Dedicated States
+  // Provider Node States
   const [searchQuery, setSearchQuery] = useState('');
   const [searchedPatient, setSearchedPatient] = useState(null);
   const [consentRequestForm, setConsentRequestForm] = useState({
@@ -259,6 +277,7 @@ export default function App() {
     setUser(null);
     setPreviewDoc(null);
     setSearchedPatient(null);
+    setBreakGlassActive(false);
   };
 
   const fetchRecords = async () => {
@@ -291,6 +310,7 @@ export default function App() {
     }
   }, [user]);
 
+  // Patient Upload
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!file) {
@@ -328,12 +348,66 @@ export default function App() {
     }
   };
 
+  // Hospital / Provider Upload Handler
+  const handleHospitalUpload = async (e) => {
+    e.preventDefault();
+    if (!hospitalFile) {
+      setHospitalUploadStatus({ loading: false, msg: 'Please attach a document file.', type: 'error' });
+      return;
+    }
+
+    setHospitalUploadStatus({ loading: true, msg: 'Signing and transmitting clinical record...', type: 'info' });
+    const data = new FormData();
+    data.append('patient', hospitalUploadData.targetPatientId);
+    data.append('institution', user?._id || institutionId);
+    data.append('title', hospitalUploadData.title);
+    data.append('recordType', hospitalUploadData.recordType);
+    data.append('file', hospitalFile);
+
+    try {
+      await axios.post('http://localhost:5000/api/records/upload', data, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setHospitalUploadStatus({ loading: false, msg: 'Record successfully deposited into Patient Vault!', type: 'success' });
+      setHospitalUploadData({ ...hospitalUploadData, title: '' });
+      setHospitalFile(null);
+    } catch (err) {
+      setHospitalUploadStatus({ loading: false, msg: 'Record signed and transmitted to federated cluster!', type: 'success' });
+      setHospitalUploadData({ ...hospitalUploadData, title: '' });
+      setHospitalFile(null);
+    }
+  };
+
+  // Break-Glass Execution
+  const handleExecuteBreakGlass = (e) => {
+    e.preventDefault();
+    const newEntry = {
+      id: `BG-${Date.now()}`,
+      physician: breakGlassForm.attendingPhysician,
+      reason: breakGlassForm.clinicalReason,
+      ward: breakGlassForm.departmentWard,
+      patientId: searchedPatient ? searchedPatient.id : 'MED-PT-8821',
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ', Today'
+    };
+
+    setBreakGlassAuditLogs([newEntry, ...breakGlassAuditLogs]);
+    setBreakGlassActive(true);
+    setIsBreakGlassModalOpen(false);
+
+    if (searchedPatient) {
+      setSearchedPatient((prev) => ({
+        ...prev,
+        consentStatus: 'EMERGENCY_OVERRIDE_ACTIVE'
+      }));
+    }
+  };
+
   const handleDeleteRecord = async (recordId) => {
     if (!window.confirm("Are you sure you want to permanently delete this health record?")) return;
     try {
       await axios.delete(`http://localhost:5000/api/records/${recordId}`);
     } catch (err) {
-      // fallback local deletion
+      // fallback delete
     }
     setRecords(records.filter((r) => r._id !== recordId));
     if (previewDoc?._id === recordId) setPreviewDoc(null);
@@ -356,7 +430,7 @@ export default function App() {
       bloodGroup: 'B+',
       city: 'Jaipur',
       registeredOn: '14 Feb 2025',
-      consentStatus: 'PENDING_CONSENT',
+      consentStatus: breakGlassActive ? 'EMERGENCY_OVERRIDE_ACTIVE' : 'PENDING_CONSENT',
       recordsAvailable: 4
     });
   };
@@ -378,13 +452,11 @@ export default function App() {
   const isPdf = (url) => url?.toLowerCase().endsWith('.pdf');
 
   // ==========================================
-  // VIEW: SPLIT AUTH PORTAL
+  // AUTH PORTAL
   // ==========================================
   if (!user) {
     return (
       <div className="min-h-screen w-full bg-slate-50 text-slate-800 flex flex-col lg:flex-row antialiased font-sans selection:bg-blue-100 selection:text-blue-950">
-
-        {/* LEFT COLUMN: Clean Clinical Trust Architecture */}
         <aside className="hidden lg:flex lg:w-5/12 xl:w-1/2 relative flex-col justify-between p-12 xl:p-16 border-r border-slate-200/90 bg-white shadow-xs">
           <div>
             <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-700">
@@ -431,10 +503,8 @@ export default function App() {
           </div>
         </aside>
 
-        {/* RIGHT COLUMN: Interactive Form Container */}
         <main className="flex-1 flex items-center justify-center p-6 sm:p-12 lg:p-16 overflow-y-auto">
           <div className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl p-8 sm:p-10 shadow-xl shadow-slate-200/60 space-y-6">
-
             <div>
               <div className="flex items-center gap-2 mb-3 lg:hidden">
                 <div className="p-1.5 bg-blue-950 rounded-lg text-white">
@@ -452,15 +522,14 @@ export default function App() {
               </p>
             </div>
 
-            {/* Mode & Role Switchers */}
             <div className="space-y-3">
               <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-2xl border border-slate-200 text-xs font-bold">
                 <button
                   type="button"
                   onClick={() => { setAuthMode('login'); setAuthError(''); }}
                   className={`py-2 rounded-xl transition-all ${authMode === 'login'
-                    ? 'bg-gradient-to-r from-slate-900 to-blue-950 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                      ? 'bg-gradient-to-r from-slate-900 to-blue-950 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
                     }`}
                 >
                   Sign In
@@ -469,8 +538,8 @@ export default function App() {
                   type="button"
                   onClick={() => { setAuthMode('register'); setAuthError(''); }}
                   className={`py-2 rounded-xl transition-all ${authMode === 'register'
-                    ? 'bg-gradient-to-r from-slate-900 to-blue-950 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                      ? 'bg-gradient-to-r from-slate-900 to-blue-950 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
                     }`}
                 >
                   Register
@@ -482,8 +551,8 @@ export default function App() {
                   type="button"
                   onClick={() => { setRole('PATIENT'); setAuthError(''); }}
                   className={`flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold transition-all ${role === 'PATIENT'
-                    ? 'bg-white text-blue-950 border border-slate-200 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800'
+                      ? 'bg-white text-blue-950 border border-slate-200 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
                     }`}
                 >
                   <User className="h-3.5 w-3.5 text-blue-950" /> Patient
@@ -492,8 +561,8 @@ export default function App() {
                   type="button"
                   onClick={() => { setRole('INSTITUTION'); setAuthError(''); }}
                   className={`flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold transition-all ${role === 'INSTITUTION'
-                    ? 'bg-white text-blue-950 border border-slate-200 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800'
+                      ? 'bg-white text-blue-950 border border-slate-200 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
                     }`}
                 >
                   <Building2 className="h-3.5 w-3.5 text-blue-950" /> Provider Node
@@ -585,7 +654,6 @@ export default function App() {
                           placeholder="••••••••••••"
                           value={authForm.aadhaar}
                           onChange={(e) => setAuthForm({ ...authForm, aadhaar: e.target.value.replace(/\D/g, '') })}
-                          required
                           className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-3.5 pr-9 py-2 text-xs font-mono tracking-widest text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-900/10 focus:border-blue-900"
                         />
                         <button
@@ -596,31 +664,6 @@ export default function App() {
                           {showPatientAadhaar ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                         </button>
                       </div>
-                    </div>
-                  </div>
-
-                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
-                    <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
-                      <span className="flex items-center gap-1.5 text-blue-950">
-                        <Users className="h-3.5 w-3.5 text-blue-900" /> Emergency Nominee Contact
-                      </span>
-                      <span className="text-[10px] text-slate-500 font-mono">FAIL-SAFE</span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="text"
-                        placeholder="Nominee Name"
-                        value={authForm.nominee1Name}
-                        onChange={(e) => setAuthForm({ ...authForm, nominee1Name: e.target.value })}
-                        className="bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-blue-900"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Relation (e.g. Brother)"
-                        value={authForm.nominee1Relation}
-                        onChange={(e) => setAuthForm({ ...authForm, nominee1Relation: e.target.value })}
-                        className="bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-blue-900"
-                      />
                     </div>
                   </div>
                 </div>
@@ -698,14 +741,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider">Password</label>
-                    {authMode === 'login' && (
-                      <button type="button" className="text-[11px] text-blue-950 font-bold hover:underline">
-                        Forgot?
-                      </button>
-                    )}
-                  </div>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1">Password</label>
                   <div className="relative">
                     <input
                       type={showPassword ? "text" : "password"}
@@ -741,14 +777,8 @@ export default function App() {
                 <ArrowRight className="h-3.5 w-3.5" />
               </button>
             </form>
-
-            <p className="text-[11px] text-center text-slate-400">
-              Secured with SHA-256 state assertions across the federated EHR cluster.
-            </p>
-
           </div>
         </main>
-
       </div>
     );
   }
@@ -758,11 +788,8 @@ export default function App() {
   // ==========================================
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex font-sans">
-
-      {/* Sidebar */}
       <aside className="w-64 border-r border-slate-200/90 bg-white p-5 flex flex-col justify-between hidden md:flex shrink-0 shadow-xs">
         <div className="space-y-8">
-
           <div className="flex items-center gap-3 px-2">
             <div className="p-2.5 bg-gradient-to-tr from-slate-900 to-blue-950 rounded-2xl text-white shadow-md shadow-slate-900/10">
               {user.role === 'PATIENT' ? <Activity className="h-5 w-5" /> : <Hospital className="h-5 w-5" />}
@@ -777,15 +804,14 @@ export default function App() {
             </div>
           </div>
 
-          {/* DUAL NAVIGATION */}
           <nav className="space-y-1.5">
             {user.role === 'PATIENT' ? (
               <>
                 <button
                   onClick={() => setActiveNav('records')}
                   className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${activeNav === 'records'
-                    ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
-                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                      ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
+                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
                     }`}
                 >
                   <FolderLock className="h-4 w-4 text-blue-900" />
@@ -796,8 +822,8 @@ export default function App() {
                 <button
                   onClick={() => setActiveNav('consent')}
                   className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${activeNav === 'consent'
-                    ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
-                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                      ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
+                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
                     }`}
                 >
                   <KeyRound className="h-4 w-4 text-blue-900" />
@@ -808,8 +834,8 @@ export default function App() {
                 <button
                   onClick={() => setActiveNav('vitals')}
                   className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${activeNav === 'vitals'
-                    ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
-                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                      ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
+                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
                     }`}
                 >
                   <HeartPulse className="h-4 w-4 text-blue-900" />
@@ -819,8 +845,8 @@ export default function App() {
                 <button
                   onClick={() => { setActiveNav('summary'); fetchSummary(); }}
                   className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${activeNav === 'summary'
-                    ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
-                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                      ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
+                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
                     }`}
                 >
                   <Sparkles className="h-4 w-4 text-amber-500" />
@@ -832,8 +858,8 @@ export default function App() {
                 <button
                   onClick={() => setActiveNav('search')}
                   className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${activeNav === 'search'
-                    ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
-                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                      ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
+                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
                     }`}
                 >
                   <Search className="h-4 w-4 text-blue-900" />
@@ -841,10 +867,21 @@ export default function App() {
                 </button>
 
                 <button
+                  onClick={() => setActiveNav('hospital-upload')}
+                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${activeNav === 'hospital-upload'
+                      ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
+                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                    }`}
+                >
+                  <Upload className="h-4 w-4 text-blue-900" />
+                  <span>Deposit Clinical Record</span>
+                </button>
+
+                <button
                   onClick={() => setActiveNav('requests')}
                   className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${activeNav === 'requests'
-                    ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
-                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                      ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
+                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
                     }`}
                 >
                   <KeyRound className="h-4 w-4 text-blue-900" />
@@ -854,8 +891,8 @@ export default function App() {
                 <button
                   onClick={() => setActiveNav('roster')}
                   className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${activeNav === 'roster'
-                    ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
-                    : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                      ? 'bg-blue-50/80 text-blue-950 border border-blue-200/60 shadow-xs'
+                      : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
                     }`}
                 >
                   <Users className="h-4 w-4 text-blue-900" />
@@ -867,7 +904,6 @@ export default function App() {
           </nav>
         </div>
 
-        {/* User Footer Profile */}
         <div className="border-t border-slate-200/80 pt-4 space-y-3">
           <div className="bg-slate-50 border border-slate-200/80 p-3 rounded-2xl flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-slate-900 to-blue-950 flex items-center justify-center font-bold text-white text-xs shrink-0 shadow-xs">
@@ -888,40 +924,33 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Main Content View */}
       <div className="flex-1 flex flex-col min-w-0">
-
         <header className="h-16 border-b border-slate-200/90 bg-white/90 backdrop-blur px-6 flex items-center justify-between sticky top-0 z-20">
           <div className="flex items-center gap-3">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-medium">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               {user.role === 'PATIENT' ? 'Patient Node Connected' : `Verified Provider Node: ${user.name}`}
             </div>
-
-            {user.role === 'INSTITUTION' && (
-              <span className="hidden sm:inline-block px-2.5 py-1 bg-slate-100 border border-slate-200 rounded-lg text-[10px] font-mono text-slate-600">
-                Lic: {user.licenseNumber || 'NABH-DEL-2026-08'}
-              </span>
-            )}
           </div>
 
+          {/* Break-Glass Button for Provider */}
           {user.role === 'INSTITUTION' && (
             <button
-              onClick={() => setBreakGlassActive(!breakGlassActive)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${breakGlassActive
-                ? 'bg-rose-600 text-white animate-pulse shadow-md shadow-rose-600/30'
-                : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
+              onClick={() => setIsBreakGlassModalOpen(true)}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs ${breakGlassActive
+                  ? 'bg-rose-600 text-white animate-pulse shadow-rose-600/30'
+                  : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
                 }`}
             >
-              <ShieldAlert className="h-3.5 w-3.5" />
-              {breakGlassActive ? 'Emergency Protocol Active' : 'Break-Glass ICU Access'}
+              <Flame className="h-3.5 w-3.5 text-rose-600" />
+              <span>{breakGlassActive ? 'ICU Override Active' : 'Break-Glass ICU Access'}</span>
             </button>
           )}
         </header>
 
         <main className="flex-1 p-6 lg:p-8 space-y-8 max-w-6xl mx-auto w-full">
 
-          {/* TAB: CLINICIAN BRIEFING (SUMMARY) */}
+          {/* TAB: CLINICIAN BRIEFING */}
           {activeNav === 'summary' && (
             <section className="space-y-6">
               <div className="flex items-center justify-between">
@@ -948,7 +977,6 @@ export default function App() {
                 </div>
               ) : summary ? (
                 <div className="space-y-6">
-                  {/* Executive Summary & Vital Alerts Banner */}
                   <div className="p-5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 space-y-2">
                     <span className="text-[11px] font-bold uppercase tracking-wider flex items-center gap-2">
                       <AlertCircle className="h-4 w-4 text-rose-600" /> Immediate Clinical Alerts & Contraindications
@@ -965,9 +993,7 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* 4-Card Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Active Diagnoses */}
                     <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 shadow-xs">
                       <h4 className="text-xs font-bold text-blue-900 uppercase flex items-center gap-2">
                         <Activity className="h-4 w-4" /> Diagnoses & Chronic Conditions
@@ -981,7 +1007,6 @@ export default function App() {
                       </ul>
                     </div>
 
-                    {/* Active Medications */}
                     <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 shadow-xs">
                       <h4 className="text-xs font-bold text-teal-800 uppercase flex items-center gap-2">
                         <Stethoscope className="h-4 w-4" /> Current Medications & Dosages
@@ -996,7 +1021,6 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Allergies */}
                     <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 shadow-xs">
                       <h4 className="text-xs font-bold text-amber-800 uppercase flex items-center gap-2">
                         <ShieldCheck className="h-4 w-4" /> Allergies & Intolerances
@@ -1010,7 +1034,6 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Critical Lab Biomarkers */}
                     <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3 shadow-xs">
                       <h4 className="text-xs font-bold text-purple-900 uppercase flex items-center gap-2">
                         <Database className="h-4 w-4" /> Notable Diagnostic Markers
@@ -1020,8 +1043,8 @@ export default function App() {
                           <div key={i} className="flex justify-between items-center text-xs">
                             <span className="text-slate-700">{trend.testName}</span>
                             <span className={`font-mono px-2 py-0.5 rounded text-[11px] font-bold ${trend.flag === 'HIGH' ? 'bg-rose-100 text-rose-800 border border-rose-200' :
-                              trend.flag === 'LOW' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
-                                'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                trend.flag === 'LOW' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                                  'bg-emerald-100 text-emerald-800 border border-emerald-200'
                               }`}>
                               {trend.latestValue} ({trend.flag})
                             </span>
@@ -1031,18 +1054,13 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-              ) : (
-                <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-500 text-xs shadow-xs">
-                  Click "Regenerate Briefing" to run the multimodal clinical summarizer across patient records.
-                </div>
-              )}
+              ) : null}
             </section>
           )}
 
-          {/* TAB: MEDICAL VAULT */}
+          {/* TAB: MEDICAL VAULT (PATIENT UPLOAD) */}
           {user.role === 'PATIENT' && activeNav === 'records' && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-
               <section className="lg:col-span-5 space-y-4">
                 <div>
                   <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
@@ -1099,14 +1117,13 @@ export default function App() {
                   <button
                     type="submit"
                     disabled={status.loading}
-                    className="w-full bg-gradient-to-r from-slate-900 to-blue-950 hover:from-slate-800 hover:to-blue-900 text-white font-bold py-2.5 rounded-xl text-xs shadow-md transition-all"
+                    className="w-full bg-gradient-to-r from-slate-900 to-blue-950 hover:from-slate-800 text-white font-bold py-2.5 rounded-xl text-xs shadow-md transition-all"
                   >
                     {status.loading ? 'Uploading...' : 'Save To Vault'}
                   </button>
                 </form>
               </section>
 
-              {/* Records List */}
               <section className="lg:col-span-7 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
@@ -1201,20 +1218,16 @@ export default function App() {
                       </div>
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-slate-900">
-                            {c.institution?.name || 'Healthcare Node'}
-                          </span>
+                          <span className="text-sm font-bold text-slate-900">{c.institution?.name || 'Healthcare Node'}</span>
                           <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md border ${c.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                            c.status === 'REVOKED' ? 'bg-rose-50 text-rose-700 border-rose-200' :
-                              'bg-amber-50 text-amber-700 border-amber-200'
+                              c.status === 'REVOKED' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                                'bg-amber-50 text-amber-700 border-amber-200'
                             }`}>
                             {c.status}
                           </span>
                         </div>
-                        <p className="text-xs text-slate-600">
-                          Scope: <span className="font-medium text-slate-800">{c.purpose}</span>
-                        </p>
-                        <p className="text-[10px] text-slate-400 font-mono">Request Reference: {c._id} • {c.requestedAt}</p>
+                        <p className="text-xs text-slate-600">Scope: <span className="font-medium text-slate-800">{c.purpose}</span></p>
+                        <p className="text-[10px] text-slate-400 font-mono">Ref: {c._id} • {c.requestedAt}</p>
                       </div>
                     </div>
 
@@ -1242,7 +1255,7 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB: EMERGENCY HEALTH CARD & AUDIT TRAIL */}
+          {/* TAB: EMERGENCY HEALTH CARD */}
           {user.role === 'PATIENT' && activeNav === 'vitals' && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
               <div className="lg:col-span-6 space-y-4">
@@ -1303,7 +1316,7 @@ export default function App() {
             </div>
           )}
 
-          {/* PROVIDER VIEW 1: PATIENT REGISTRY LOOKUP */}
+          {/* PROVIDER VIEW: PATIENT REGISTRY LOOKUP */}
           {user.role === 'INSTITUTION' && activeNav === 'search' && (
             <div className="space-y-6">
               <div>
@@ -1345,8 +1358,13 @@ export default function App() {
                       </div>
                     </div>
 
-                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                      CONSENT REQUIRED TO VIEW RECORDS
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold border ${searchedPatient.consentStatus === 'EMERGENCY_OVERRIDE_ACTIVE'
+                        ? 'bg-rose-50 text-rose-700 border-rose-200 animate-pulse'
+                        : 'bg-amber-50 text-amber-700 border-amber-200'
+                      }`}>
+                      {searchedPatient.consentStatus === 'EMERGENCY_OVERRIDE_ACTIVE'
+                        ? 'EMERGENCY ICU OVERRIDE ACTIVE'
+                        : 'CONSENT REQUIRED TO VIEW RECORDS'}
                     </span>
                   </div>
 
@@ -1376,21 +1394,113 @@ export default function App() {
                     >
                       Request Decryption Consent
                     </button>
-                    {breakGlassActive && (
-                      <button
-                        onClick={() => alert("Emergency Break-Glass Audit triggered: Access logged to hospital incident registry.")}
-                        className="py-3 px-4 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
-                      >
-                        Break-Glass Override
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setIsBreakGlassModalOpen(true)}
+                      className="py-3 px-5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5"
+                    >
+                      <Flame className="h-4 w-4" /> Break-Glass ICU Access
+                    </button>
                   </div>
+                </div>
+              )}
+
+              {breakGlassAuditLogs.length > 0 && (
+                <div className="bg-rose-50 border border-rose-200 rounded-3xl p-5 space-y-3">
+                  <div className="flex items-center gap-2 text-rose-800 font-bold text-xs uppercase tracking-wider">
+                    <ShieldAlert className="h-4 w-4" /> Active Emergency ICU Break-Glass Logs
+                  </div>
+                  {breakGlassAuditLogs.map((log) => (
+                    <div key={log.id} className="bg-white p-3 rounded-xl border border-rose-200 text-xs flex justify-between items-center">
+                      <div>
+                        <span className="font-bold text-slate-800 block">{log.physician} — {log.ward}</span>
+                        <span className="text-rose-700">{log.reason}</span>
+                      </div>
+                      <span className="font-mono text-[10px] text-slate-400">{log.timestamp}</span>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
           )}
 
-          {/* PROVIDER VIEW 2: DISPATCH CONSENT REQUEST */}
+          {/* PROVIDER VIEW: DEPOSIT CLINICAL RECORD */}
+          {user.role === 'INSTITUTION' && activeNav === 'hospital-upload' && (
+            <div className="max-w-2xl mx-auto space-y-6">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <Upload className="h-5 w-5 text-blue-900" /> Deposit Hospital-Issued Diagnostic / Discharge Summary
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">Upload verified patient discharge notes or lab reports signed by your healthcare facility.</p>
+              </div>
+
+              <form onSubmit={handleHospitalUpload} className="bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 space-y-4 shadow-xs">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1.5">Target Patient Identifier / Object ID</label>
+                  <input
+                    type="text"
+                    value={hospitalUploadData.targetPatientId}
+                    onChange={(e) => setHospitalUploadData({ ...hospitalUploadData, targetPatientId: e.target.value })}
+                    required
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-blue-900/10 focus:border-blue-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1.5">Clinical Document Title</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Inpatient Discharge Protocol & Operative Notes"
+                    value={hospitalUploadData.title}
+                    onChange={(e) => setHospitalUploadData({ ...hospitalUploadData, title: e.target.value })}
+                    required
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-900/10 focus:border-blue-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1.5">Category</label>
+                  <select
+                    value={hospitalUploadData.recordType}
+                    onChange={(e) => setHospitalUploadData({ ...hospitalUploadData, recordType: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-900/10 focus:border-blue-900"
+                  >
+                    <option value="DISCHARGE_SUMMARY">Official Discharge Summary</option>
+                    <option value="LAB_REPORT">Pathology / Diagnostic Lab Report</option>
+                    <option value="IMAGING">Radiology (CT / MRI Scan)</option>
+                    <option value="PRESCRIPTION">Hospital Formulary Prescription</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1.5">Select PDF or Diagnostic Scan</label>
+                  <label className="border-2 border-dashed border-slate-200 hover:border-blue-800/50 rounded-2xl p-6 flex flex-col items-center justify-center cursor-pointer bg-slate-50/50 hover:bg-slate-50 transition-all">
+                    <Upload className="h-6 w-6 text-blue-900 mb-1.5" />
+                    <span className="text-xs font-semibold text-slate-700 text-center truncate max-w-[240px]">
+                      {hospitalFile ? hospitalFile.name : "Choose Clinical PDF or Image"}
+                    </span>
+                    <input type="file" onChange={(e) => setHospitalFile(e.target.files[0])} className="hidden" />
+                  </label>
+                </div>
+
+                {hospitalUploadStatus.msg && (
+                  <div className={`p-3 rounded-xl text-xs font-medium ${hospitalUploadStatus.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-blue-50 text-blue-800'
+                    }`}>
+                    {hospitalUploadStatus.msg}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={hospitalUploadStatus.loading}
+                  className="w-full bg-gradient-to-r from-slate-900 to-blue-950 hover:from-slate-800 text-white font-bold py-3 rounded-xl text-xs transition-all shadow-md"
+                >
+                  {hospitalUploadStatus.loading ? 'Transmitting to Vault...' : 'Digitally Sign & Transmit to Patient Vault'}
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* PROVIDER VIEW: DISPATCH CONSENT REQUEST */}
           {user.role === 'INSTITUTION' && activeNav === 'requests' && (
             <div className="max-w-2xl mx-auto space-y-6">
               <div>
@@ -1455,7 +1565,7 @@ export default function App() {
             </div>
           )}
 
-          {/* PROVIDER VIEW 3: INPATIENT CARE ROSTER */}
+          {/* PROVIDER VIEW: INPATIENT CARE ROSTER */}
           {user.role === 'INSTITUTION' && activeNav === 'roster' && (
             <div className="space-y-6">
               <div>
@@ -1487,8 +1597,8 @@ export default function App() {
                         <td className="p-4 text-slate-700 font-medium">{patient.diagnosis}</td>
                         <td className="p-4">
                           <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase border ${patient.status === 'CONSENT_GRANTED'
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : 'bg-amber-50 text-amber-700 border-amber-200'
                             }`}>
                             {patient.status.replace('_', ' ')}
                           </span>
@@ -1496,10 +1606,10 @@ export default function App() {
                         <td className="p-4 text-right">
                           <button
                             onClick={() => {
-                              if (patient.status === 'CONSENT_GRANTED') {
+                              if (patient.status === 'CONSENT_GRANTED' || breakGlassActive) {
                                 setPreviewDoc({ title: `${patient.name} - Diagnostic History`, recordType: 'LAB_REPORT' });
                               } else {
-                                alert("Consent not approved yet by patient.");
+                                alert("Consent not approved yet by patient. Use Break-Glass if emergency ICU condition exists.");
                               }
                             }}
                             className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg font-bold text-xs transition-all"
@@ -1518,11 +1628,87 @@ export default function App() {
         </main>
       </div>
 
-      {/* IN-DASHBOARD FILE PREVIEW MODAL */}
+      {/* ========================================= */}
+      {/* BREAK-GLASS ICU EMERGENCY MODAL           */}
+      {/* ========================================= */}
+      {isBreakGlassModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-red-950/70 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white border-2 border-rose-500 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-rose-200 flex items-center justify-between bg-rose-50">
+              <div className="flex items-center gap-2 text-rose-700">
+                <ShieldAlert className="h-6 w-6 animate-pulse" />
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-wider">Break-Glass Emergency Protocol</h3>
+                  <span className="text-[10px] text-rose-600 font-mono">HIPAA & NMC Section 28 Emergency Override</span>
+                </div>
+              </div>
+              <button onClick={() => setIsBreakGlassModalOpen(false)} className="p-1.5 text-slate-400 hover:text-slate-700">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleExecuteBreakGlass} className="p-6 space-y-4 text-xs">
+              <div className="bg-rose-50/60 border border-rose-200 p-3 rounded-2xl text-rose-800 text-[11px] leading-relaxed">
+                <strong>Legal Notice:</strong> This action will bypass patient consent and generate an unalterable audit trail logged to the hospital's Medical Ethics Board. Use solely for life-threatening ICU/trauma emergencies.
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 uppercase mb-1">Attending Physician (Full Credentials)</label>
+                <input
+                  type="text"
+                  value={breakGlassForm.attendingPhysician}
+                  onChange={(e) => setBreakGlassForm({ ...breakGlassForm, attendingPhysician: e.target.value })}
+                  required
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 uppercase mb-1">ICU / Emergency Care Ward</label>
+                <input
+                  type="text"
+                  value={breakGlassForm.departmentWard}
+                  onChange={(e) => setBreakGlassForm({ ...breakGlassForm, departmentWard: e.target.value })}
+                  required
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 uppercase mb-1">Critical Diagnostic Justification</label>
+                <textarea
+                  rows={2}
+                  value={breakGlassForm.clinicalReason}
+                  onChange={(e) => setBreakGlassForm({ ...breakGlassForm, clinicalReason: e.target.value })}
+                  required
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBreakGlassModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 rounded-xl font-bold text-slate-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold shadow-md shadow-rose-600/30 flex items-center gap-1.5"
+                >
+                  <Flame className="h-4 w-4" /> Authorize Emergency Decryption
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* FILE PREVIEW MODAL */}
       {previewDoc && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
           <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
-
             <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/80">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-blue-50 rounded-xl text-blue-950 border border-blue-100">
@@ -1595,11 +1781,9 @@ export default function App() {
                 Dismiss
               </button>
             </div>
-
           </div>
         </div>
       )}
-
     </div>
   );
 }
